@@ -1,6 +1,6 @@
 {
   "name": "CO3",
-  "displayName": "CO3",
+  "displayName": "AO3 Reader",
   "plugins": [
     "expo-font"
   ]
