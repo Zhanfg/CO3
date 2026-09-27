@@ -24,6 +24,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const PULL_THRESHOLD = 150;
 const PROGRESS_SAVE_DEBOUNCE = 1000;
+const SCROLL_REPORT_INTERVAL = 120;
 
 const PullIndicator = ({ progress, theme }) => {
   const size = 60;
@@ -190,7 +191,6 @@ const ChapterReader = ({
           const savedProgress = await progressDAO.get(workId, chapterID);
           setScrollProgress(savedProgress);
           lastSavedProgressRef.current = savedProgress;
-          sendWebViewCommand('scroll')
           console.log(`Initial progress loaded: ${savedProgress}`);
         } catch (error) {
           console.error('Error loading saved progress:', error);
@@ -260,6 +260,23 @@ const ChapterReader = ({
     }
   }, []);
 
+  // Restore saved progress only after the WebView and database state are ready.
+  useEffect(() => {
+    if (!webViewReady || !initialProgressLoaded || initialScrollAttempted) {
+      return;
+    }
+
+    sendWebViewCommand('scrollToProgress', {
+      progress: lastSavedProgressRef.current,
+    });
+    setInitialScrollAttempted(true);
+  }, [
+    webViewReady,
+    initialProgressLoaded,
+    initialScrollAttempted,
+    sendWebViewCommand,
+  ]);
+
   // Reset state when chapter changes
   useEffect(() => {
     setScrollProgress(0);
@@ -320,7 +337,9 @@ const ChapterReader = ({
             break;
           case 'scroll': {
             const { progress } = data;
-            setScrollProgress(progress);
+            setScrollProgress(previous =>
+              Math.abs(previous - progress) >= 0.001 ? progress : previous,
+            );
             onProgressUpdate?.(progress);
 
             // Debounce saving progress
@@ -402,13 +421,6 @@ const ChapterReader = ({
   }, [hasPreviousChapter, onPreviousChapter, isIncognitoMode, scrollProgress, workId, chapterID, progressDAO]);
 
   const injectedJavaScript = `
-    //Initial scroll. That's not perfect since some CSS element / image might have not loaded yet and you then lose like 5% every times
-    //Works fine on only text tho
-    const ch = document.body.scrollHeight;
-    const sh = window.innerHeight;
-    const ms = Math.max(0, ch - sh);
-    document.documentElement.scrollTop = ${scrollProgress} * ms;
-
     // Function to send logs from WebView to React Native
     function webViewLog(message) {
       if (window.ReactNativeWebView) {
@@ -469,7 +481,7 @@ const ChapterReader = ({
         if (window.ReactNativeWebView) {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'scroll', progress }));
         }
-      }, 50);
+      }, ${SCROLL_REPORT_INTERVAL});
     }
     window.addEventListener('scroll', handleScroll, { passive: true });
 
@@ -528,6 +540,9 @@ const ChapterReader = ({
     });
 
     // Indicate that initial JavaScript has been injected and WebView is ready for commands
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'webview-ready' }));
+    }
     webViewLog('WebView: Injected JavaScript loaded and ready.');
     true;
   `;
