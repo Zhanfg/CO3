@@ -5,8 +5,8 @@ export class LibraryDAO {
     this.db = db;
   }
 
-  // Private helper to map database rows to the Work model
-  async _mapWorkRow(row) {
+  // Map a database row to the Work model using preloaded relations.
+  _mapWorkRow(row, tags = [], warnings = []) {
     const workData = {
       id: row.id,
       title: row.title,
@@ -17,18 +17,16 @@ export class LibraryDAO {
       updated: row.updated,
       bookmarks: row.bookmarks,
       description: row.description,
-      descriptionHTML: row.descriptionHTML, // Correctly mapped here
+      descriptionHTML: row.descriptionHTML,
       currentChapter: row.currentChapter,
       chapterCount: row.chapterCount,
       rating: row.rating,
       category: row.category,
       warningStatus: row.warningStatus,
       isCompleted: row.isCompleted ? Boolean(row.isCompleted) : null,
+      tags,
+      warnings,
     };
-
-    // Get tags and warnings for this work
-    workData.tags = await this.getTagsForWork(row.id);
-    workData.warnings = await this.getWarningsForWork(row.id);
 
     const libraryData = {
       dateAdded: row.dateAdded,
@@ -40,6 +38,75 @@ export class LibraryDAO {
       work: new Work(workData),
       library: libraryData,
     };
+  }
+
+  async _getTagsForWorks(workIds) {
+    const map = new Map(workIds.map(id => [id, []]));
+    if (workIds.length === 0) return map;
+
+    const placeholders = workIds.map(() => '?').join(',');
+    const [results] = await this.db.executeSql(
+      `
+        SELECT wt.workId, t.name
+        FROM work_tags wt
+        JOIN tags t ON t.id = wt.tagId
+        WHERE wt.workId IN (${placeholders})
+        ORDER BY wt.workId, t.name
+      `,
+      workIds,
+    );
+
+    for (let i = 0; i < results.rows.length; i++) {
+      const row = results.rows.item(i);
+      map.get(row.workId)?.push(row.name);
+    }
+
+    return map;
+  }
+
+  async _getWarningsForWorks(workIds) {
+    const map = new Map(workIds.map(id => [id, []]));
+    if (workIds.length === 0) return map;
+
+    const placeholders = workIds.map(() => '?').join(',');
+    const [results] = await this.db.executeSql(
+      `
+        SELECT ww.workId, w.name
+        FROM work_warnings ww
+        JOIN warnings w ON w.id = ww.warningId
+        WHERE ww.workId IN (${placeholders})
+        ORDER BY ww.workId, w.name
+      `,
+      workIds,
+    );
+
+    for (let i = 0; i < results.rows.length; i++) {
+      const row = results.rows.item(i);
+      map.get(row.workId)?.push(row.name);
+    }
+
+    return map;
+  }
+
+  async _mapResultRows(results) {
+    const rows = Array.from(
+      { length: results.rows.length },
+      (_, i) => results.rows.item(i),
+    );
+    const workIds = rows.map(row => row.id);
+
+    const [tagsByWork, warningsByWork] = await Promise.all([
+      this._getTagsForWorks(workIds),
+      this._getWarningsForWorks(workIds),
+    ]);
+
+    return rows.map(row =>
+      this._mapWorkRow(
+        row,
+        tagsByWork.get(row.id) ?? [],
+        warningsByWork.get(row.id) ?? [],
+      ),
+    );
   }
 
   async add(workId, collection = 'Default') {
@@ -131,14 +198,7 @@ export class LibraryDAO {
       pageSize,
       offset,
     ]);
-    const works = [];
-
-    for (let i = 0; i < results.rows.length; i++) {
-      const row = results.rows.item(i);
-      works.push(await this._mapWorkRow(row));
-    }
-
-    return works;
+    return this._mapResultRows(results);
   }
 
   async deleteCollection(collection) {
@@ -282,14 +342,7 @@ export class LibraryDAO {
       pageSize,
       offset,
     ]);
-    const works = [];
-
-    for (let i = 0; i < results.rows.length; i++) {
-      const row = results.rows.item(i);
-      works.push(await this._mapWorkRow(row));
-    }
-
-    return works;
+    return this._mapResultRows(results);
   }
 
   async getSearchCount(
