@@ -194,20 +194,10 @@ const LibraryScreen = ({
         count = await libraryDAO.getTotalCount(selectedCollection);
       }
 
-      const worksWithLibraryData = [];
-      for (const entry of libraryEntries) {
-        try {
-          const work = await workDAO.get(entry.work.id);
-          if (work) {
-            worksWithLibraryData.push({
-              work: work,
-              library: entry.library
-            });
-          }
-        } catch (err) {
-          console.error(`Error fetching work ${entry.work.id}:`, err);
-        }
-      }
+      // LibraryDAO already returns the complete work + library pair.
+      // Re-fetching every work here caused an avoidable N+1 query pattern on
+      // each page load, which is especially noticeable on larger libraries.
+      const worksWithLibraryData = libraryEntries;
 
       if (reset) {
         setWorks(worksWithLibraryData);
