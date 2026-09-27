@@ -1,6 +1,7 @@
 {
   "name": "CO3",
   "version": "0.0.1",
+  "productName": "AO3 Reader",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
